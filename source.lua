@@ -440,5 +440,5 @@ end
 task.wait(0.5)
 chat("!sts " .. getgenv().AutoGive.Tools)
 
-task.wait(0.2)
+task.wait(1)
 chat("!sta " .. getgenv().AutoGive.Armor)
