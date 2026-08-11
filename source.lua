@@ -1,3 +1,9 @@
+if TownScriptLoaded then
+    return
+end
+
+getgenv().TownScriptLoaded = true
+
 local RunService = game:GetService("RunService")
 local Lighting = game:GetService("Lighting")
 local Terrain = workspace:FindFirstChildWhichIsA("Terrain")
