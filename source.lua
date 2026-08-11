@@ -1,8 +1,3 @@
-getgenv().AutoGive = {
-	Tools = 'ak+coyo ',
-	Armor = 'riot'
-}
-
 local RunService = game:GetService("RunService")
 local Lighting = game:GetService("Lighting")
 local Terrain = workspace:FindFirstChildWhichIsA("Terrain")
