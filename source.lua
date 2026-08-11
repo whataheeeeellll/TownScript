@@ -432,3 +432,18 @@ UserInputService.InputEnded:Connect(function(input)
         disableAimbot()
     end
 end)
+
+local TextChatService = game:GetService("TextChatService")
+
+local function chat(msg)
+    pcall(function()
+        local channel = TextChatService.TextChannels.RBXGeneral
+        channel:SendAsync(msg)
+    end)
+end
+
+task.wait(0.5)
+chat("!sts " .. getgenv().AutoGive.Tools)
+
+task.wait(0.2)
+chat("!sta " .. getgenv().AutoGive.Armor)
