@@ -11,20 +11,6 @@ local Players = game:GetService("Players")
 local UserInputService = game:GetService("UserInputService")
 local LocalPlayer = Players.LocalPlayer
 local Camera = workspace.CurrentCamera
-local TextChatService = game:GetService("TextChatService")
-
-local function chat(msg)
-    pcall(function()
-        local channel = TextChatService.TextChannels.RBXGeneral
-        channel:SendAsync(msg)
-    end)
-end
-
-task.wait(0.5)
-chat("!sts " .. getgenv().AutoGive.Tools)
-
-task.wait(0.5)
-chat("!sta " .. getgenv().AutoGive.Armor)
 
 if Terrain then
     Terrain.WaterWaveSize = 0
