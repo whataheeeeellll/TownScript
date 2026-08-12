@@ -136,7 +136,7 @@ local function createNametag(character, player)
     nameLabel.TextColor3 = getColorForCharacter(character, player)
     nameLabel.TextStrokeTransparency = 0.3
     nameLabel.TextStrokeColor3 = Color3.new(0, 0, 0)
-    nameLabel.Text = player.Name
+    nameLabel.Text = player.DisplayName
     nameLabel.Font = Enum.Font.GothamBold
     nameLabel.TextSize = 14
     nameLabel.Parent = billboard
@@ -238,16 +238,33 @@ end)
 local aimbotEnabled = false
 local aimConnection = nil
 local currentTarget = nil
+local lastValidTarget = nil -- Запоминаем последнюю валидную цель
 
 local AIM_PART = "Head"
 local MAX_DISTANCE = 500
+local SMOOTHNESS = 0.1
+local TARGET_LOST_DELAY = 0.1 -- Задержка перед сбросом цели (в секундах)
+local targetLostTimer = 0
 
 local function isAlive(character)
+    if not character then return false end
     local humanoid = character:FindFirstChildOfClass("Humanoid")
-    return humanoid and humanoid.Health > 0
+    -- Дополнительная проверка: персонаж должен существовать и иметь health > 0
+    if not humanoid or humanoid.Health <= 0 then return false end
+    -- Проверяем, не разваливается ли персонаж
+    if humanoid:GetState() == Enum.HumanoidStateType.Dead then return false end
+    return true
+end
+
+local function isCharacterValid(character)
+    if not character then return false end
+    if not character.Parent then return false end -- Проверяем, не удалён ли персонаж
+    if not character:FindFirstChild(AIM_PART) then return false end -- Проверяем, есть ли целевая часть
+    return true
 end
 
 local function isOnScreen(targetPart)
+    if not targetPart or not targetPart.Parent then return false end
     local screenPos, onScreen = Camera:WorldToViewportPoint(targetPart.Position)
     if not onScreen then return false end
     
@@ -259,11 +276,14 @@ local function isOnScreen(targetPart)
 end
 
 local function isInRange(targetPart)
+    if not targetPart then return false end
     local distance = (targetPart.Position - Camera.CFrame.Position).Magnitude
     return distance <= MAX_DISTANCE
 end
 
 local function hasLineOfSight(targetPart, targetCharacter)
+    if not targetPart or not targetPart.Parent then return false end
+    
     local origin = Camera.CFrame.Position
     local direction = (targetPart.Position - origin)
     local distance = direction.Magnitude
@@ -279,7 +299,7 @@ local function hasLineOfSight(targetPart, targetCharacter)
         table.insert(ignoreList, LocalPlayer.Character)
     end
     
-    if targetCharacter then
+    if targetCharacter and targetCharacter.Parent then
         table.insert(ignoreList, targetCharacter)
     end
     
@@ -298,6 +318,7 @@ local function hasLineOfSight(targetPart, targetCharacter)
 end
 
 local function hasGunScript(character)
+    if not character or not character.Parent then return false end
     for _, child in pairs(character:GetChildren()) do
         if child:IsA("Tool") then
             local gunScript = child:FindFirstChild("GunScript")
@@ -313,19 +334,15 @@ local function isValidTarget(player)
     if not player then return false end
     
     local character = player.Character
-    if not character then return false end
-    
+    if not isCharacterValid(character) then return false end
     if not isAlive(character) then return false end
-    
     if hasForceField(character) then return false end
     
     local targetPart = character:FindFirstChild(AIM_PART)
-    if not targetPart then return false end
+    if not targetPart or not targetPart.Parent then return false end
     
     if not isOnScreen(targetPart) then return false end
-    
     if not isInRange(targetPart) then return false end
-    
     if not hasLineOfSight(targetPart, character) then return false end
     
     return true
@@ -343,19 +360,15 @@ local function findTarget()
         if player == LocalPlayer then continue end
         
         local character = player.Character
-        if not character then continue end
-        
+        if not isCharacterValid(character) then continue end
         if not isAlive(character) then continue end
-        
         if hasForceField(character) then continue end
         
         local targetPart = character:FindFirstChild(AIM_PART)
-        if not targetPart then continue end
+        if not targetPart or not targetPart.Parent then continue end
         
         if not isOnScreen(targetPart) then continue end
-        
         if not isInRange(targetPart) then continue end
-        
         if not hasLineOfSight(targetPart, character) then continue end
         
         local screenPos = Camera:WorldToViewportPoint(targetPart.Position)
@@ -370,35 +383,97 @@ local function findTarget()
     return closestPlayer
 end
 
+-- Подключаем отслеживание смерти игроков
+local function onHumanoidDied(player)
+    if currentTarget == player then
+        -- Если текущая цель умерла, сразу сбрасываем её
+        currentTarget = nil
+        lastValidTarget = nil
+        targetLostTimer = 0
+    end
+end
+
+-- Отслеживаем смерти всех игроков
+for _, player in pairs(Players:GetPlayers()) do
+    if player ~= LocalPlayer then
+        local function onCharacterAdded(character)
+            local humanoid = character:WaitForChild("Humanoid", 5)
+            if humanoid then
+                humanoid.Died:Connect(function()
+                    onHumanoidDied(player)
+                end)
+            end
+        end
+        
+        player.CharacterAdded:Connect(onCharacterAdded)
+        if player.Character then
+            onCharacterAdded(player.Character)
+        end
+    end
+end
+
+Players.PlayerAdded:Connect(function(player)
+    if player == LocalPlayer then return end
+    player.CharacterAdded:Connect(function(character)
+        local humanoid = character:WaitForChild("Humanoid", 5)
+        if humanoid then
+            humanoid.Died:Connect(function()
+                onHumanoidDied(player)
+            end)
+        end
+    end)
+end)
+
 local function enableAimbot()
     if aimbotEnabled then return end
     aimbotEnabled = true
+    targetLostTimer = 0
     
     currentTarget = findTarget()
+    lastValidTarget = currentTarget
     
-    aimConnection = RunService.RenderStepped:Connect(function()
+    aimConnection = RunService.RenderStepped:Connect(function(deltaTime)
         if not aimbotEnabled then return end
         
         if not hasGunScript(LocalPlayer.Character or {}) then
             currentTarget = nil
+            lastValidTarget = nil
             return
         end
         
-        if currentTarget and currentTarget.Character then
-            if hasForceField(currentTarget.Character) then
+        -- Проверяем валидность текущей цели
+        if currentTarget then
+            if not isValidTarget(currentTarget) then
+                -- Если цель стала невалидной, сразу сбрасываем
                 currentTarget = nil
+                lastValidTarget = nil
+                targetLostTimer = 0
             end
         end
         
-        if not isValidTarget(currentTarget) then
-            currentTarget = nil
+        -- Если нет текущей цели, ищем новую
+        if not currentTarget then
             currentTarget = findTarget()
+            if currentTarget then
+                lastValidTarget = currentTarget
+            end
         end
         
+        -- Аимимся только если есть валидная цель
         if currentTarget and currentTarget.Character then
             local targetPart = currentTarget.Character:FindFirstChild(AIM_PART)
-            if targetPart then
-                Camera.CFrame = CFrame.lookAt(Camera.CFrame.Position, targetPart.Position)
+            if targetPart and targetPart.Parent then
+                -- Дополнительная проверка: убеждаемся, что персонаж всё ещё жив
+                if isAlive(currentTarget.Character) then
+                    local targetCFrame = CFrame.lookAt(Camera.CFrame.Position, targetPart.Position)
+                    Camera.CFrame = Camera.CFrame:Lerp(targetCFrame, SMOOTHNESS)
+                else
+                    currentTarget = nil
+                    lastValidTarget = nil
+                end
+            else
+                currentTarget = nil
+                lastValidTarget = nil
             end
         end
     end)
@@ -407,6 +482,8 @@ end
 local function disableAimbot()
     aimbotEnabled = false
     currentTarget = nil
+    lastValidTarget = nil
+    targetLostTimer = 0
     
     if aimConnection then
         aimConnection:Disconnect()
