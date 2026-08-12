@@ -1,3 +1,5 @@
+if game.PlaceId ~= 4991214437 then return end
+
 local RunService = game:GetService("RunService")
 local Lighting = game:GetService("Lighting")
 local Terrain = workspace:FindFirstChildWhichIsA("Terrain")
@@ -285,7 +287,8 @@ local function hasLineOfSight(targetPart, targetCharacter)
     if not targetPart or not targetPart.Parent then return false end
     
     local origin = Camera.CFrame.Position
-    local direction = (targetPart.Position - origin)
+    local targetPos = targetPart.Position
+    local direction = (targetPos - origin)
     local distance = direction.Magnitude
     direction = direction.Unit
     
@@ -305,13 +308,37 @@ local function hasLineOfSight(targetPart, targetCharacter)
     
     rayParams.FilterDescendantsInstances = ignoreList
     
-    local rayResult = workspace:Raycast(origin, direction * distance, rayParams)
+    local currentPos = origin
+    local remainingDist = distance
+    local maxIterations = 100
+    local iterations = 0
     
-    if rayResult then
-        local part = rayResult.Instance
-        if part and part.CanCollide then
+    while remainingDist > 0.01 and iterations < maxIterations do
+        iterations = iterations + 1
+        
+        local rayResult = workspace:Raycast(currentPos, direction * remainingDist, rayParams)
+        
+        if not rayResult then
+            return true -- Ничего не встретили, путь свободен
+        end
+        
+        local hitPart = rayResult.Instance
+        local hitPos = rayResult.Position
+        
+        -- Попали в цель
+        if hitPart:IsDescendantOf(targetCharacter) then
+            return true
+        end
+        
+        -- Любая часть с коллизией блокирует обзор
+        if hitPart.CanCollide then
             return false
         end
+        
+        -- Часть без коллизии — пропускаем и идём дальше
+        local hitDist = (hitPos - currentPos).Magnitude
+        currentPos = hitPos + direction * 0.01
+        remainingDist = remainingDist - hitDist - 0.01
     end
     
     return true
