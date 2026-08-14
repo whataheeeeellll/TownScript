@@ -1,3 +1,5 @@
+--v1.4!!! updated the script
+
 if game.PlaceId ~= 4991214437 then return end
 
 local RunService = game:GetService("RunService")
@@ -5,6 +7,7 @@ local Lighting = game:GetService("Lighting")
 local Terrain = workspace:FindFirstChildWhichIsA("Terrain")
 local Players = game:GetService("Players")
 local UserInputService = game:GetService("UserInputService")
+local TweenService = game:GetService("TweenService")
 local LocalPlayer = Players.LocalPlayer
 local Camera = workspace.CurrentCamera
 
@@ -65,8 +68,6 @@ workspace.DescendantAdded:Connect(function(child)
         end
     end)
 end)
-
--- ==================== ESP ====================
 
 local playerData = {}
 
@@ -235,33 +236,109 @@ Players.PlayerRemoving:Connect(function(player)
     cleanupPlayerData(player)
 end)
 
--- ==================== AIMBOT ====================
+local FOV_RADIUS = 150
+local FOV_COLOR = Color3.fromRGB(255, 255, 255)
+local FOV_THICKNESS = 2
+local FOV_ANIMATION_SPEED = 0.15
+
+local fovCircle = Instance.new("ScreenGui")
+fovCircle.Name = "FOVCircle"
+fovCircle.ResetOnSpawn = false
+fovCircle.IgnoreGuiInset = true
+fovCircle.Parent = LocalPlayer:WaitForChild("PlayerGui")
+
+local fovContainer = Instance.new("Frame")
+fovContainer.Name = "FOVContainer"
+fovContainer.Size = UDim2.new(0, FOV_RADIUS * 2, 0, FOV_RADIUS * 2)
+fovContainer.AnchorPoint = Vector2.new(0.5, 0.5)
+fovContainer.Position = UDim2.new(0.5, 0, 0.5, 0)
+fovContainer.BackgroundTransparency = 1
+fovContainer.Parent = fovCircle
+
+local fovCircleDraw = Instance.new("Frame")
+fovCircleDraw.Name = "FOVCircleDraw"
+fovCircleDraw.Size = UDim2.new(1, 0, 1, 0)
+fovCircleDraw.Position = UDim2.new(0, 0, 0, 0)
+fovCircleDraw.BackgroundTransparency = 1
+fovCircleDraw.BorderSizePixel = 0
+fovCircleDraw.Parent = fovContainer
+
+local fovCorner = Instance.new("UICorner")
+fovCorner.CornerRadius = UDim.new(1, 0)
+fovCorner.Parent = fovCircleDraw
+
+local fovStroke = Instance.new("UIStroke")
+fovStroke.Thickness = FOV_THICKNESS
+fovStroke.Color = FOV_COLOR
+fovStroke.Transparency = 0
+fovStroke.Parent = fovCircleDraw
+
+fovCircle.Enabled = false
+fovStroke.Transparency = 1
+
+local fovTween = nil
+
+local function showFOVCircle()
+    if fovTween then
+        fovTween:Cancel()
+    end
+    
+    fovCircle.Enabled = true
+    
+    fovTween = TweenService:Create(fovStroke, TweenInfo.new(FOV_ANIMATION_SPEED, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+        Transparency = 0
+    })
+    
+    fovTween:Play()
+end
+
+local function hideFOVCircle()
+    if fovTween then
+        fovTween:Cancel()
+    end
+    
+    fovTween = TweenService:Create(fovStroke, TweenInfo.new(FOV_ANIMATION_SPEED, Enum.EasingStyle.Quad, Enum.EasingDirection.In), {
+        Transparency = 1
+    })
+    
+    fovTween:Play()
+    
+    fovTween.Completed:Connect(function()
+        if fovStroke.Transparency >= 0.99 then
+            fovCircle.Enabled = false
+        end
+    end)
+end
 
 local aimbotEnabled = false
 local aimConnection = nil
 local currentTarget = nil
-local lastValidTarget = nil -- Запоминаем последнюю валидную цель
+local currentTargetPart = nil
 
-local AIM_PART = "Head"
 local MAX_DISTANCE = 500
 local SMOOTHNESS = 0.1
-local TARGET_LOST_DELAY = 0.1 -- Задержка перед сбросом цели (в секундах)
-local targetLostTimer = 0
+
+local BODY_PARTS_PRIORITY = {
+    "Head",
+    "Torso",
+    "HumanoidRootPart",
+    "Left Arm",
+    "Right Arm",
+    "Left Leg",
+    "Right Leg"
+}
 
 local function isAlive(character)
     if not character then return false end
     local humanoid = character:FindFirstChildOfClass("Humanoid")
-    -- Дополнительная проверка: персонаж должен существовать и иметь health > 0
     if not humanoid or humanoid.Health <= 0 then return false end
-    -- Проверяем, не разваливается ли персонаж
     if humanoid:GetState() == Enum.HumanoidStateType.Dead then return false end
     return true
 end
 
 local function isCharacterValid(character)
     if not character then return false end
-    if not character.Parent then return false end -- Проверяем, не удалён ли персонаж
-    if not character:FindFirstChild(AIM_PART) then return false end -- Проверяем, есть ли целевая часть
+    if not character.Parent then return false end
     return true
 end
 
@@ -275,6 +352,18 @@ local function isOnScreen(targetPart)
     if screenPos.Y < 0 or screenPos.Y > screenSize.Y then return false end
     
     return true
+end
+
+local function isInFOV(targetPart)
+    if not targetPart or not targetPart.Parent then return false end
+    
+    local screenPos, onScreen = Camera:WorldToViewportPoint(targetPart.Position)
+    if not onScreen then return false end
+    
+    local screenCenter = Vector2.new(Camera.ViewportSize.X / 2, Camera.ViewportSize.Y / 2)
+    local distanceFromCenter = (Vector2.new(screenPos.X, screenPos.Y) - screenCenter).Magnitude
+    
+    return distanceFromCenter <= FOV_RADIUS
 end
 
 local function isInRange(targetPart)
@@ -319,23 +408,20 @@ local function hasLineOfSight(targetPart, targetCharacter)
         local rayResult = workspace:Raycast(currentPos, direction * remainingDist, rayParams)
         
         if not rayResult then
-            return true -- Ничего не встретили, путь свободен
+            return true
         end
         
         local hitPart = rayResult.Instance
         local hitPos = rayResult.Position
         
-        -- Попали в цель
         if hitPart:IsDescendantOf(targetCharacter) then
             return true
         end
         
-        -- Любая часть с коллизией блокирует обзор
         if hitPart.CanCollide then
             return false
         end
         
-        -- Часть без коллизии — пропускаем и идём дальше
         local hitDist = (hitPos - currentPos).Magnitude
         currentPos = hitPos + direction * 0.01
         remainingDist = remainingDist - hitDist - 0.01
@@ -357,29 +443,59 @@ local function hasGunScript(character)
     return false
 end
 
-local function isValidTarget(player)
-    if not player then return false end
+local function getPartPriority(partName)
+    for index, priorityName in ipairs(BODY_PARTS_PRIORITY) do
+        if partName == priorityName then
+            return index
+        end
+    end
+    return #BODY_PARTS_PRIORITY + 1
+end
+
+local function findBestTargetPart(character)
+    if not isCharacterValid(character) or not isAlive(character) then
+        return nil
+    end
     
-    local character = player.Character
-    if not isCharacterValid(character) then return false end
-    if not isAlive(character) then return false end
-    if hasForceField(character) then return false end
+    if hasForceField(character) then
+        return nil
+    end
     
-    local targetPart = character:FindFirstChild(AIM_PART)
-    if not targetPart or not targetPart.Parent then return false end
+    local bestPart = nil
+    local bestPriority = #BODY_PARTS_PRIORITY + 1
     
-    if not isOnScreen(targetPart) then return false end
-    if not isInRange(targetPart) then return false end
-    if not hasLineOfSight(targetPart, character) then return false end
+    for _, partName in ipairs(BODY_PARTS_PRIORITY) do
+        local part = character:FindFirstChild(partName)
+        if part and part:IsA("BasePart") and part.Parent then
+            if isOnScreen(part) and isInFOV(part) and isInRange(part) and hasLineOfSight(part, character) then
+                local priority = getPartPriority(partName)
+                if priority < bestPriority then
+                    bestPriority = priority
+                    bestPart = part
+                end
+            end
+        end
+    end
     
-    return true
+    if not bestPart then
+        for _, child in pairs(character:GetChildren()) do
+            if child:IsA("BasePart") and child.Parent then
+                if isOnScreen(child) and isInFOV(child) and isInRange(child) and hasLineOfSight(child, character) then
+                    return child
+                end
+            end
+        end
+    end
+    
+    return bestPart
 end
 
 local function findTarget()
-    if not hasGunScript(LocalPlayer.Character or {}) then return nil end
+    if not hasGunScript(LocalPlayer.Character or {}) then return nil, nil end
     
     local closestPlayer = nil
     local closestDistance = math.huge
+    local closestPart = nil
     
     local screenCenter = Vector2.new(Camera.ViewportSize.X / 2, Camera.ViewportSize.Y / 2)
     
@@ -391,36 +507,77 @@ local function findTarget()
         if not isAlive(character) then continue end
         if hasForceField(character) then continue end
         
-        local targetPart = character:FindFirstChild(AIM_PART)
-        if not targetPart or not targetPart.Parent then continue end
+        local bestPart = findBestTargetPart(character)
+        if not bestPart then continue end
         
-        if not isOnScreen(targetPart) then continue end
-        if not isInRange(targetPart) then continue end
-        if not hasLineOfSight(targetPart, character) then continue end
-        
-        local screenPos = Camera:WorldToViewportPoint(targetPart.Position)
+        local screenPos = Camera:WorldToViewportPoint(bestPart.Position)
         local distance = (Vector2.new(screenPos.X, screenPos.Y) - screenCenter).Magnitude
         
-        if distance < closestDistance then
+        if distance < closestDistance and distance <= FOV_RADIUS then
             closestDistance = distance
             closestPlayer = player
+            closestPart = bestPart
         end
     end
     
-    return closestPlayer
+    return closestPlayer, closestPart
 end
 
--- Подключаем отслеживание смерти игроков
-local function onHumanoidDied(player)
-    if currentTarget == player then
-        -- Если текущая цель умерла, сразу сбрасываем её
+local function isPartStillValid(character, part)
+    if not character or not character.Parent then return false end
+    if not part or not part.Parent then return false end
+    if not isAlive(character) then return false end
+    if hasForceField(character) then return false end
+    if not isOnScreen(part) then return false end
+    if not isInFOV(part) then return false end
+    if not isInRange(part) then return false end
+    if not hasLineOfSight(part, character) then return false end
+    return true
+end
+
+local function updateTargetPart()
+    if not currentTarget or not currentTarget.Character then
         currentTarget = nil
-        lastValidTarget = nil
-        targetLostTimer = 0
+        currentTargetPart = nil
+        return
+    end
+    
+    local character = currentTarget.Character
+    
+    if not isCharacterValid(character) or not isAlive(character) or hasForceField(character) then
+        currentTarget = nil
+        currentTargetPart = nil
+        return
+    end
+    
+    local bestPart = findBestTargetPart(character)
+    
+    if bestPart then
+        if not currentTargetPart or not currentTargetPart.Parent then
+            currentTargetPart = bestPart
+        else
+            local currentPriority = getPartPriority(currentTargetPart.Name)
+            local bestPriority = getPartPriority(bestPart.Name)
+            
+            if bestPriority < currentPriority then
+                currentTargetPart = bestPart
+            elseif bestPriority == currentPriority and bestPart ~= currentTargetPart then
+                currentTargetPart = bestPart
+            end
+        end
+    else
+        currentTarget = nil
+        currentTargetPart = nil
     end
 end
 
--- Отслеживаем смерти всех игроков
+local function onHumanoidDied(player)
+    if currentTarget == player then
+        currentTarget = nil
+        currentTargetPart = nil
+    end
+end
+
 for _, player in pairs(Players:GetPlayers()) do
     if player ~= LocalPlayer then
         local function onCharacterAdded(character)
@@ -451,57 +608,78 @@ Players.PlayerAdded:Connect(function(player)
     end)
 end)
 
+local function updateFOVVisibility()
+    local hasWeapon = hasGunScript(LocalPlayer.Character or {})
+    
+    if hasWeapon then
+        showFOVCircle()
+    else
+        hideFOVCircle()
+    end
+end
+
+LocalPlayer.CharacterAdded:Connect(function(character)
+    updateFOVVisibility()
+    
+    character.ChildAdded:Connect(function(child)
+        if child:IsA("Tool") then
+            task.wait(0.1)
+            updateFOVVisibility()
+        end
+    end)
+    
+    character.ChildRemoved:Connect(function(child)
+        if child:IsA("Tool") then
+            task.wait(0.1)
+            updateFOVVisibility()
+        end
+    end)
+end)
+
+if LocalPlayer.Character then
+    updateFOVVisibility()
+    
+    LocalPlayer.Character.ChildAdded:Connect(function(child)
+        if child:IsA("Tool") then
+            task.wait(0.1)
+            updateFOVVisibility()
+        end
+    end)
+    
+    LocalPlayer.Character.ChildRemoved:Connect(function(child)
+        if child:IsA("Tool") then
+            task.wait(0.1)
+            updateFOVVisibility()
+        end
+    end)
+end
+
 local function enableAimbot()
     if aimbotEnabled then return end
     aimbotEnabled = true
-    targetLostTimer = 0
     
-    currentTarget = findTarget()
-    lastValidTarget = currentTarget
+    currentTarget, currentTargetPart = findTarget()
     
     aimConnection = RunService.RenderStepped:Connect(function(deltaTime)
         if not aimbotEnabled then return end
         
         if not hasGunScript(LocalPlayer.Character or {}) then
             currentTarget = nil
-            lastValidTarget = nil
+            currentTargetPart = nil
             return
         end
         
-        -- Проверяем валидность текущей цели
         if currentTarget then
-            if not isValidTarget(currentTarget) then
-                -- Если цель стала невалидной, сразу сбрасываем
-                currentTarget = nil
-                lastValidTarget = nil
-                targetLostTimer = 0
-            end
+            updateTargetPart()
         end
         
-        -- Если нет текущей цели, ищем новую
-        if not currentTarget then
-            currentTarget = findTarget()
-            if currentTarget then
-                lastValidTarget = currentTarget
-            end
+        if not currentTarget or not currentTargetPart then
+            currentTarget, currentTargetPart = findTarget()
         end
         
-        -- Аимимся только если есть валидная цель
-        if currentTarget and currentTarget.Character then
-            local targetPart = currentTarget.Character:FindFirstChild(AIM_PART)
-            if targetPart and targetPart.Parent then
-                -- Дополнительная проверка: убеждаемся, что персонаж всё ещё жив
-                if isAlive(currentTarget.Character) then
-                    local targetCFrame = CFrame.lookAt(Camera.CFrame.Position, targetPart.Position)
-                    Camera.CFrame = Camera.CFrame:Lerp(targetCFrame, SMOOTHNESS)
-                else
-                    currentTarget = nil
-                    lastValidTarget = nil
-                end
-            else
-                currentTarget = nil
-                lastValidTarget = nil
-            end
+        if currentTarget and currentTargetPart and currentTargetPart.Parent then
+            local targetCFrame = CFrame.lookAt(Camera.CFrame.Position, currentTargetPart.Position)
+            Camera.CFrame = Camera.CFrame:Lerp(targetCFrame, SMOOTHNESS)
         end
     end)
 end
@@ -509,8 +687,7 @@ end
 local function disableAimbot()
     aimbotEnabled = false
     currentTarget = nil
-    lastValidTarget = nil
-    targetLostTimer = 0
+    currentTargetPart = nil
     
     if aimConnection then
         aimConnection:Disconnect()
