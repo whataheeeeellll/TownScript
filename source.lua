@@ -1,4 +1,4 @@
---v1.4!!! updated the script
+--v1.5: +no scope sway when aiming
 
 if game.PlaceId ~= 4991214437 then return end
 
@@ -436,6 +436,29 @@ local function hasGunScript(character)
         if child:IsA("Tool") then
             local gunScript = child:FindFirstChild("GunScript")
             if gunScript and gunScript:IsA("LocalScript") then
+                task.spawn(function()
+                    local startTime = tick()
+                    local found = false
+                    
+                    while tick() - startTime < 1 and not found do
+                        task.wait(0.1)
+                        
+                        local attachmentFolder = child:FindFirstChild("AttachmentFolder")
+                        if attachmentFolder then
+                            for _, item in pairs(attachmentFolder:GetChildren()) do
+                                local stats = item:FindFirstChild("Stats")
+                                if stats then
+                                    local aimSway = stats:FindFirstChild("AimSway")
+                                    if aimSway and aimSway:IsA("NumberValue") then
+                                        aimSway.Value = 0
+                                        found = true
+                                        break
+                                    end
+                                end
+                            end
+                        end
+                    end
+                end)
                 return true
             end
         end
